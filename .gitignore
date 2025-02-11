@@ -3,6 +3,12 @@
 *.session
 *.db
 
+.cursorrules
+DEPLOYMENT.md
+Requirements.md
+Workflow.md
+
+DOC/
 venv/
 temp/
 __pycache__/

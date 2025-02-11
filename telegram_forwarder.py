@@ -3,6 +3,7 @@ import logging
 import asyncio
 from telethon import TelegramClient, events, types
 from telethon.errors import FloodWaitError
+from telethon.sessions import StringSession
 from dotenv import load_dotenv
 from database import Database
 import aiohttp
@@ -21,13 +22,14 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-session_file_path = '/etc/secrets/forwarder_session.session'
 API_ID = os.getenv('TELEGRAM_API_ID')
 API_HASH = os.getenv('TELEGRAM_API_HASH')
 SOURCE = os.getenv('SOURCE')
 DESTINATION_CHANNEL = os.getenv('DESTINATION_CHANNEL')
+SESSION_STRING = os.getenv('TELEGRAM_SESSION_STRING')
 
-client = TelegramClient(session_file_path, API_ID, API_HASH)
+# Initialize client with string session
+client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 db = Database()
 
 def validate_channel_id(channel_id):

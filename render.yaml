@@ -14,5 +14,7 @@ services:
             sync: false
           - key: DESTINATION_CHANNEL
             sync: false
+          - key: TELEGRAM_SESSION_STRING
+            sync: false
       healthCheckPath: /health
       plan: free
