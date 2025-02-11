@@ -1,9 +1,9 @@
 services:
-    - type: worker
+    - type: web
       name: telegram-forwarder
       env: python
       buildCommand: pip install -r requirements.txt
-      startCommand: python telegram_forwarder.py
+      startCommand: gunicorn app:app
       autoDeploy: false
       envVars:
           - key: TELEGRAM_API_ID
@@ -14,3 +14,5 @@ services:
             sync: false
           - key: DESTINATION_CHANNEL
             sync: false
+      healthCheckPath: /health
+      plan: free

@@ -455,10 +455,15 @@ async def main():
         except Exception as e:
             logger.error(f"Error cleaning up temp directory: {str(e)}")
 
-if __name__ == "__main__":
+def start_bot():
+    """Start the bot - called from web interface"""
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Bot stopped by user")
     except Exception as e:
-        logger.error(f"Fatal error: {str(e)}") 
+        logger.error(f"Fatal error: {str(e)}")
+        raise
+
+if __name__ == "__main__":
+    start_bot() 
