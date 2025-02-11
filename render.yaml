@@ -1,0 +1,16 @@
+services:
+    - type: worker
+      name: telegram-forwarder
+      env: python
+      buildCommand: pip install -r requirements.txt
+      startCommand: python telegram_forwarder.py
+      autoDeploy: false
+      envVars:
+          - key: TELEGRAM_API_ID
+            sync: false
+          - key: TELEGRAM_API_HASH
+            sync: false
+          - key: SOURCE
+            sync: false
+          - key: DESTINATION_CHANNEL
+            sync: false
