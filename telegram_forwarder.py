@@ -35,6 +35,7 @@ def validate_channel_id(channel_id):
         if channel_id.startswith('@'):
             return channel_id
         
+        # Remove any existing -100 prefix
         if channel_id.startswith('-100'):
             channel_id = channel_id[4:]
         
@@ -43,8 +44,9 @@ def validate_channel_id(channel_id):
         except ValueError:
             return channel_id
     
+    # For numeric IDs, ensure they have the -100 prefix for supergroups/channels
     if isinstance(channel_id, int):
-        return channel_id
+        return -100 + abs(channel_id)  # Ensure proper format for channels
     
     return channel_id
 
@@ -69,7 +71,25 @@ async def handle_media(message):
         temp_dir = os.path.join(os.getcwd(), 'temp')
         os.makedirs(temp_dir, exist_ok=True)
         
-        temp_file = os.path.join(temp_dir, f'media_{message.id}')
+        # Add file extension to help with media type recognition
+        file_extension = ''
+        if isinstance(message.media, types.MessageMediaPhoto):
+            file_extension = '.jpg'
+        elif isinstance(message.media, types.MessageMediaDocument):
+            # Try to get extension from mime type or file name
+            if message.file and message.file.name:
+                file_extension = os.path.splitext(message.file.name)[1]
+            elif message.media.document.mime_type:
+                if 'image/webp' in message.media.document.mime_type:
+                    file_extension = '.webp'
+                elif 'image/jpeg' in message.media.document.mime_type:
+                    file_extension = '.jpg'
+                elif 'video' in message.media.document.mime_type:
+                    file_extension = '.mp4'
+                elif 'application/x-tgsticker' in message.media.document.mime_type:
+                    file_extension = '.tgs'
+        
+        temp_file = os.path.join(temp_dir, f'media_{message.id}{file_extension}')
         await message.download_media(temp_file)
         logger.info(f"Media downloaded successfully: {temp_file}")
         return temp_file
@@ -135,14 +155,25 @@ async def forward_message_with_retry(message, media_path=None):
         dest_channel = validate_channel_id(DESTINATION_CHANNEL)
         
         try:
+            # Try to resolve the entity first
             entity = await client.get_entity(dest_channel)
             
-            if media_path:
-                await client.send_file(
-                    entity=entity,
-                    file=media_path,
-                    caption=formatted_text
-                )
+            if media_path and os.path.exists(media_path):
+                # Ensure the file exists and has content
+                if os.path.getsize(media_path) > 0:
+                    await client.send_file(
+                        entity=entity,
+                        file=media_path,
+                        caption=formatted_text,
+                        force_document=False  # Let Telegram determine how to send it
+                    )
+                else:
+                    logger.error(f"Media file exists but is empty: {media_path}")
+                    # Fall back to text-only message
+                    await client.send_message(
+                        entity=entity,
+                        message=formatted_text
+                    )
             else:
                 await client.send_message(
                     entity=entity,
@@ -227,21 +258,44 @@ async def process_message_queue():
                             temp_dir = os.path.join(os.getcwd(), 'temp')
                             os.makedirs(temp_dir, exist_ok=True)
                             
+                            # Add file extension based on media type
+                            file_extension = ''
+                            if isinstance(message.media, types.MessageMediaPhoto):
+                                file_extension = '.jpg'
+                            elif isinstance(message.media, types.MessageMediaDocument):
+                                if message.file and message.file.name:
+                                    file_extension = os.path.splitext(message.file.name)[1]
+                                elif message.media.document.mime_type:
+                                    if 'image/webp' in message.media.document.mime_type:
+                                        file_extension = '.webp'
+                                    elif 'image/jpeg' in message.media.document.mime_type:
+                                        file_extension = '.jpg'
+                                    elif 'video' in message.media.document.mime_type:
+                                        file_extension = '.mp4'
+                                    elif 'application/x-tgsticker' in message.media.document.mime_type:
+                                        file_extension = '.tgs'
+                            
                             # Download the media to a temporary file
-                            new_media_path = os.path.join(temp_dir, f'media_queued_{message.id}')
+                            new_media_path = os.path.join(temp_dir, f'media_queued_{message.id}{file_extension}')
                             await message.download_media(new_media_path)
                             logger.info(f"Media re-downloaded successfully for queued message: {new_media_path}")
+                            
+                            # Verify file was downloaded successfully
+                            if not os.path.exists(new_media_path) or os.path.getsize(new_media_path) == 0:
+                                raise Exception("Media download failed or file is empty")
+                            
                         except Exception as e:
                             logger.error(f"Error re-downloading media for message {message_id}: {str(e)}")
                             db.update_message_status(message_id, 'failed', f'Media download failed: {str(e)}')
                             continue
                     
-                    if message:
+                    try:
                         await forward_message_with_retry(message, new_media_path)
                         db.update_message_status(message_id, 'completed')
                         logger.info(f"Successfully processed queued message {message_id}")
-                    else:
-                        db.update_message_status(message_id, 'failed', 'Message not found')
+                    except Exception as e:
+                        logger.error(f"Error forwarding queued message {message_id}: {str(e)}")
+                        db.update_message_status(message_id, 'failed', str(e))
                         
                 except Exception as e:
                     logger.error(f"Error processing queued message {message_id}: {str(e)}")
