@@ -21,12 +21,13 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+session_file_path = '/etc/secrets/forwarder_session.session'
 API_ID = os.getenv('TELEGRAM_API_ID')
 API_HASH = os.getenv('TELEGRAM_API_HASH')
 SOURCE = os.getenv('SOURCE')
 DESTINATION_CHANNEL = os.getenv('DESTINATION_CHANNEL')
 
-client = TelegramClient('forwarder_session', API_ID, API_HASH)
+client = TelegramClient(session_file_path, API_ID, API_HASH)
 db = Database()
 
 def validate_channel_id(channel_id):
