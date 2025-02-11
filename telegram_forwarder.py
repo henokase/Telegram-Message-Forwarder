@@ -63,6 +63,14 @@ async def check_internet_connection():
     except:
         return False
 
+def get_temp_dir():
+    """Get the appropriate temp directory based on environment"""
+    if os.environ.get('RENDER'):
+        # Use Render's disk storage
+        return '/tmp'
+    # Use local temp directory
+    return os.path.join(os.getcwd(), 'temp')
+
 async def handle_media(message):
     """
     Handle media files in messages
@@ -72,7 +80,7 @@ async def handle_media(message):
         return None
     
     try:
-        temp_dir = os.path.join(os.getcwd(), 'temp')
+        temp_dir = get_temp_dir()
         os.makedirs(temp_dir, exist_ok=True)
         
         # Add file extension to help with media type recognition
@@ -353,7 +361,7 @@ async def process_message_queue():
                     if message.media:
                         try:
                             # Create temporary directory if it doesn't exist
-                            temp_dir = os.path.join(os.getcwd(), 'temp')
+                            temp_dir = get_temp_dir()
                             os.makedirs(temp_dir, exist_ok=True)
                             
                             # Download the media to a temporary file
