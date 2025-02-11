@@ -1,10 +1,7 @@
-.env
+.env*
 *.log
 *.session
 *.db
-*.cursorrules
-DEPLOYMENT.md
-Requirements.md
 
 venv/
 temp/
