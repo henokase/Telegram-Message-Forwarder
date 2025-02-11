@@ -1,0 +1,11 @@
+.env
+*.log
+*.session
+*.db
+*.cursorrules
+DEPLOYMENT.md
+Requirements.md
+
+venv/
+temp/
+__pycache__/
