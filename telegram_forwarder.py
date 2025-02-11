@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from database import Database
 import aiohttp
 import backoff
+from datetime import datetime
 
 logging.basicConfig(
     level=logging.INFO,
@@ -86,8 +87,19 @@ async def handle_media(message):
                     file_extension = '.jpg'
                 elif 'video' in message.media.document.mime_type:
                     file_extension = '.mp4'
+                elif 'audio' in message.media.document.mime_type:
+                    file_extension = '.m4a'
                 elif 'application/x-tgsticker' in message.media.document.mime_type:
                     file_extension = '.tgs'
+        elif isinstance(message.media, types.MessageMediaWebPage):
+            # For web pages with preview media
+            if message.media.webpage.photo:
+                file_extension = '.jpg'
+            elif message.media.webpage.document:
+                if 'video' in message.media.webpage.document.mime_type:
+                    file_extension = '.mp4'
+                elif 'audio' in message.media.webpage.document.mime_type:
+                    file_extension = '.m4a'
         
         temp_file = os.path.join(temp_dir, f'media_{message.id}{file_extension}')
         await message.download_media(temp_file)
@@ -113,9 +125,12 @@ def get_message_type(message):
         if isinstance(message.media, types.MessageMediaPhoto):
             return "photo"
         elif isinstance(message.media, types.MessageMediaDocument):
+            # Check for video in document
+            if hasattr(message.media.document, 'mime_type') and 'video' in message.media.document.mime_type:
+                return "video"
             return "document"
-        elif isinstance(message.media, types.MessageMediaVideo):
-            return "video"
+        elif isinstance(message.media, types.MessageMediaWebPage):
+            return "webpage"
         elif isinstance(message.media, types.MessageMediaAudio):
             return "audio"
         elif isinstance(message.media, types.MessageMediaVoice):
@@ -124,7 +139,7 @@ def get_message_type(message):
             return "other_media"
     return "text"
 
-def format_group_message(message):
+def format_group_message(message, is_edit=False):
     """Format group message to include sender information"""
     sender = message.sender
     if sender:
@@ -136,40 +151,73 @@ def format_group_message(message):
     else:
         sender_name = "Unknown Sender"
 
-    formatted_text = f"From: {sender_name}\n"
+    # Add edit indicator and timestamp for edited messages
+    edit_info = ""
+    if is_edit:
+        edit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        edit_info = f"\n[Edited at {edit_time}]"
+    
+    formatted_text = f"From: {sender_name}{edit_info}\n"
     if message.text:
         formatted_text += f"\n{message.text}"
     
     return formatted_text
 
 @backoff.on_exception(backoff.expo, FloodWaitError, max_tries=5)
-async def forward_message_with_retry(message, media_path=None):
+async def forward_message_with_retry(message, media_path=None, is_edit=False):
     """Forward a message with exponential backoff retry"""
     try:
         msg_type = get_message_type(message)
         
         # For group messages, we want to include sender information
         is_group = isinstance(message.peer_id, types.PeerChat) or isinstance(message.peer_id, types.PeerChannel)
-        formatted_text = format_group_message(message) if is_group else message.text
+        formatted_text = format_group_message(message, is_edit) if is_group else message.text
+        
+        # Add edit indicator for non-group messages
+        if is_edit and not is_group:
+            edit_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            formatted_text = f"{formatted_text}\n[Edited at {edit_time}]"
 
         dest_channel = validate_channel_id(DESTINATION_CHANNEL)
         
         try:
-            # Try to resolve the entity first
             entity = await client.get_entity(dest_channel)
             
-            if media_path and os.path.exists(media_path):
-                # Ensure the file exists and has content
+            # Handle web pages with media
+            if isinstance(message.media, types.MessageMediaWebPage) and message.media.webpage:
+                webpage = message.media.webpage
+                # If webpage has media, download and send it
+                if webpage.photo or (webpage.document and ('video' in webpage.document.mime_type or 'audio' in webpage.document.mime_type)):
+                    if media_path and os.path.exists(media_path):
+                        await client.send_file(
+                            entity=entity,
+                            file=media_path,
+                            caption=formatted_text,
+                            force_document=False
+                        )
+                    else:
+                        # If media download failed, just send the message with the link
+                        await client.send_message(
+                            entity=entity,
+                            message=formatted_text
+                        )
+                else:
+                    # For web pages without media or with unsupported media
+                    await client.send_message(
+                        entity=entity,
+                        message=formatted_text
+                    )
+            # Handle regular media messages
+            elif media_path and os.path.exists(media_path):
                 if os.path.getsize(media_path) > 0:
                     await client.send_file(
                         entity=entity,
                         file=media_path,
                         caption=formatted_text,
-                        force_document=False  # Let Telegram determine how to send it
+                        force_document=False
                     )
                 else:
                     logger.error(f"Media file exists but is empty: {media_path}")
-                    # Fall back to text-only message
                     await client.send_message(
                         entity=entity,
                         message=formatted_text
@@ -228,6 +276,45 @@ async def handle_new_message(event):
     except Exception as e:
         logger.error(f"Error in handle_new_message: {str(e)}")
 
+@client.on(events.MessageEdited(chats=SOURCE))
+async def handle_edited_message(event):
+    """Handle edited messages from source group/channel"""
+    try:
+        message = event.message
+        logger.info(f"Edited message received from source (ID: {message.id})")
+        
+        if not await check_internet_connection():
+            logger.warning("No internet connection. Queuing edited message for later.")
+            db.queue_message(
+                message_id=message.id,
+                chat_id=message.chat_id,
+                message_text=message.text,
+                media_path=None,
+                is_edit=True
+            )
+            return
+
+        media_path = await handle_media(message)
+        
+        try:
+            # Forward the edited message with edit mark
+            await forward_message_with_retry(message, media_path, is_edit=True)
+            logger.info(f"Edited message forwarded successfully (ID: {message.id})")
+        except Exception as e:
+            logger.error(f"Failed to forward edited message: {str(e)}")
+            db.queue_message(
+                message_id=message.id,
+                chat_id=message.chat_id,
+                message_text=message.text,
+                media_path=media_path,
+                is_edit=True
+            )
+        finally:
+            if media_path:
+                await cleanup_media(media_path)
+    except Exception as e:
+        logger.error(f"Error in handle_edited_message: {str(e)}")
+
 async def process_message_queue():
     """Process queued messages"""
     while True:
@@ -241,10 +328,18 @@ async def process_message_queue():
             
             for msg in pending_messages:
                 try:
-                    message_id, chat_id, message_text, media_path = msg[1:5]
+                    message_id, chat_id, message_text, media_path, _, _, _, _, _, is_edit = msg
                     
                     # Get the original message
-                    message = await client.get_messages(chat_id, ids=message_id)
+                    try:
+                        # First try to get the chat entity
+                        chat = await client.get_entity(chat_id)
+                        message = await client.get_messages(chat, ids=message_id)
+                    except Exception as e:
+                        logger.error(f"Could not find original message or chat: {str(e)}")
+                        db.update_message_status(message_id, 'failed', 'Original message or chat not found')
+                        continue
+
                     if not message:
                         logger.error(f"Could not find original message {message_id}")
                         db.update_message_status(message_id, 'failed', 'Original message not found')
@@ -258,26 +353,34 @@ async def process_message_queue():
                             temp_dir = os.path.join(os.getcwd(), 'temp')
                             os.makedirs(temp_dir, exist_ok=True)
                             
-                            # Add file extension based on media type
-                            file_extension = ''
+                            # Download the media to a temporary file
+                            new_media_path = os.path.join(temp_dir, f'media_queued_{message.id}')
+                            await message.download_media(new_media_path)
+                            
+                            # Add proper extension based on media type
                             if isinstance(message.media, types.MessageMediaPhoto):
-                                file_extension = '.jpg'
+                                new_media_path += '.jpg'
                             elif isinstance(message.media, types.MessageMediaDocument):
                                 if message.file and message.file.name:
-                                    file_extension = os.path.splitext(message.file.name)[1]
+                                    new_media_path += os.path.splitext(message.file.name)[1]
                                 elif message.media.document.mime_type:
-                                    if 'image/webp' in message.media.document.mime_type:
-                                        file_extension = '.webp'
+                                    if 'video' in message.media.document.mime_type:
+                                        new_media_path += '.mp4'
+                                    elif 'audio' in message.media.document.mime_type:
+                                        new_media_path += '.m4a'
+                                    elif 'image/webp' in message.media.document.mime_type:
+                                        new_media_path += '.webp'
                                     elif 'image/jpeg' in message.media.document.mime_type:
-                                        file_extension = '.jpg'
-                                    elif 'video' in message.media.document.mime_type:
-                                        file_extension = '.mp4'
-                                    elif 'application/x-tgsticker' in message.media.document.mime_type:
-                                        file_extension = '.tgs'
+                                        new_media_path += '.jpg'
+                            elif isinstance(message.media, types.MessageMediaWebPage):
+                                if message.media.webpage.photo:
+                                    new_media_path += '.jpg'
+                                elif message.media.webpage.document:
+                                    if 'video' in message.media.webpage.document.mime_type:
+                                        new_media_path += '.mp4'
+                                    elif 'audio' in message.media.webpage.document.mime_type:
+                                        new_media_path += '.m4a'
                             
-                            # Download the media to a temporary file
-                            new_media_path = os.path.join(temp_dir, f'media_queued_{message.id}{file_extension}')
-                            await message.download_media(new_media_path)
                             logger.info(f"Media re-downloaded successfully for queued message: {new_media_path}")
                             
                             # Verify file was downloaded successfully
@@ -290,7 +393,8 @@ async def process_message_queue():
                             continue
                     
                     try:
-                        await forward_message_with_retry(message, new_media_path)
+                        # Forward message with edit status if it's an edited message
+                        await forward_message_with_retry(message, new_media_path, is_edit=bool(is_edit))
                         db.update_message_status(message_id, 'completed')
                         logger.info(f"Successfully processed queued message {message_id}")
                     except Exception as e:

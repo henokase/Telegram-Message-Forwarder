@@ -28,9 +28,17 @@ class Database:
                         created_at TIMESTAMP,
                         retries INTEGER DEFAULT 0,
                         status TEXT DEFAULT 'pending',
-                        error_message TEXT
+                        error_message TEXT,
+                        is_edit BOOLEAN DEFAULT 0
                     )
                 ''')
+                
+                # Add is_edit column if it doesn't exist
+                try:
+                    cursor.execute('ALTER TABLE queued_messages ADD COLUMN is_edit BOOLEAN DEFAULT 0')
+                except sqlite3.OperationalError:
+                    # Column already exists
+                    pass
                 
                 conn.commit()
                 logger.info("Database initialized successfully")
@@ -39,16 +47,16 @@ class Database:
             logger.error(f"Error initializing database: {str(e)}")
             raise
 
-    def queue_message(self, message_id, chat_id, message_text=None, media_path=None):
+    def queue_message(self, message_id, chat_id, message_text=None, media_path=None, is_edit=False):
         """Add a message to the queue"""
         try:
             with sqlite3.connect(self.db_file) as conn:
                 cursor = conn.cursor()
                 cursor.execute('''
                     INSERT INTO queued_messages 
-                    (message_id, chat_id, message_text, media_path, created_at)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (message_id, chat_id, message_text, media_path, datetime.now()))
+                    (message_id, chat_id, message_text, media_path, created_at, is_edit)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (message_id, chat_id, message_text, media_path, datetime.now(), is_edit))
                 conn.commit()
                 logger.info(f"Message {message_id} queued successfully")
                 return cursor.lastrowid
