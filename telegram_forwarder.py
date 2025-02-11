@@ -212,14 +212,29 @@ async def process_message_queue():
                 try:
                     message_id, chat_id, message_text, media_path = msg[1:5]
                     
-                    # If there's media, we need to re-download it
-                    new_media_path = None
-                    if media_path:
-                        # Here you would re-download the media
-                        # For now, we'll just use text
-                        pass
-
+                    # Get the original message
                     message = await client.get_messages(chat_id, ids=message_id)
+                    if not message:
+                        logger.error(f"Could not find original message {message_id}")
+                        db.update_message_status(message_id, 'failed', 'Original message not found')
+                        continue
+
+                    # Handle media if present
+                    new_media_path = None
+                    if message.media:
+                        try:
+                            # Create temporary directory if it doesn't exist
+                            temp_dir = os.path.join(os.getcwd(), 'temp')
+                            os.makedirs(temp_dir, exist_ok=True)
+                            
+                            # Download the media to a temporary file
+                            new_media_path = os.path.join(temp_dir, f'media_queued_{message.id}')
+                            await message.download_media(new_media_path)
+                            logger.info(f"Media re-downloaded successfully for queued message: {new_media_path}")
+                        except Exception as e:
+                            logger.error(f"Error re-downloading media for message {message_id}: {str(e)}")
+                            db.update_message_status(message_id, 'failed', f'Media download failed: {str(e)}')
+                            continue
                     
                     if message:
                         await forward_message_with_retry(message, new_media_path)
