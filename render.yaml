@@ -3,7 +3,7 @@ services:
       name: telegram-forwarder
       env: python
       buildCommand: pip install -r requirements.txt
-      startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --log-file -
+      startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --log-file -
       autoDeploy: false
       disk:
           name: temp
@@ -21,6 +21,8 @@ services:
           - key: TELEGRAM_SESSION_STRING
             sync: false
           - key: PYTHONUNBUFFERED
+            value: "true"
+          - key: RENDER
             value: "true"
       healthCheckPath: /health
       plan: free

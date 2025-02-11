@@ -4,6 +4,8 @@ import telegram_forwarder
 import logging
 import os
 import sys
+import asyncio
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -23,17 +25,29 @@ bot_status = {
     "start_time": None
 }
 
+# Create an event loop for the main thread
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+
 def run_bot():
     """Run the Telegram forwarder bot in a separate thread"""
     try:
         bot_status["running"] = True
         bot_status["error"] = None
-        telegram_forwarder.start_bot()
+        bot_status["start_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Create a new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Run the bot
+        loop.run_until_complete(telegram_forwarder.main())
     except Exception as e:
         bot_status["error"] = str(e)
         logger.error(f"Bot error: {e}")
     finally:
         bot_status["running"] = False
+        loop.close()
 
 @app.route('/')
 def home():
@@ -43,6 +57,7 @@ def home():
             "status": "active" if bot_status["running"] else "inactive",
             "error": bot_status["error"],
             "last_message": bot_status["last_message"],
+            "start_time": bot_status["start_time"],
             "service": "Telegram Forwarder",
             "health": "ok"
         })
@@ -76,6 +91,19 @@ def start():
         return jsonify({"status": "already running"}), 200
     except Exception as e:
         logger.error(f"Error starting bot: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/stop')
+def stop():
+    """Stop the bot if it's running"""
+    try:
+        if bot_status["running"]:
+            # Signal the bot to stop
+            bot_status["running"] = False
+            return jsonify({"status": "stopping"}), 200
+        return jsonify({"status": "not running"}), 200
+    except Exception as e:
+        logger.error(f"Error stopping bot: {e}")
         return jsonify({"error": str(e)}), 500
 
 def start_server():

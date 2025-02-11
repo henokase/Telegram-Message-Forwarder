@@ -1,1 +1,1 @@
-web: gunicorn app:app --bind 0.0.0.0:$PORT --log-file - 
+web: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --log-file - 

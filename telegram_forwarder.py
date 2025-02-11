@@ -9,17 +9,18 @@ from database import Database
 import aiohttp
 import backoff
 from datetime import datetime
+import signal
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('telegram_forwarder.log'),
-        logging.StreamHandler()
+        logging.StreamHandler()  # Only log to stdout for Render
     ]
 )
 logger = logging.getLogger(__name__)
 
+# Load environment variables
 load_dotenv()
 
 API_ID = os.getenv('TELEGRAM_API_ID')
@@ -31,6 +32,19 @@ SESSION_STRING = os.getenv('TELEGRAM_SESSION_STRING')
 # Initialize client with string session
 client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 db = Database()
+
+# Flag for graceful shutdown
+is_running = True
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals"""
+    global is_running
+    logger.info("Received shutdown signal")
+    is_running = False
+
+# Register signal handlers
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
 
 def validate_channel_id(channel_id):
     """Validate and format channel ID"""
@@ -429,10 +443,12 @@ async def process_message_queue():
 
 async def main():
     """Main function to run the client"""
+    global is_running
+    
     try:
         logger.info("Starting Telegram Forwarder...")
         
-        if not all([API_ID, API_HASH, SOURCE, DESTINATION_CHANNEL]):
+        if not all([API_ID, API_HASH, SOURCE, DESTINATION_CHANNEL, SESSION_STRING]):
             raise ValueError("Missing required environment variables")
         
         dest_channel = validate_channel_id(DESTINATION_CHANNEL)
@@ -448,20 +464,35 @@ async def main():
             logger.error(f"Failed to access destination channel: {str(e)}")
             raise
         
-        os.makedirs('temp', exist_ok=True)
+        # Create temp directory in Render's disk storage
+        temp_dir = get_temp_dir()
+        os.makedirs(temp_dir, exist_ok=True)
         
-        asyncio.create_task(process_message_queue())
+        # Start message queue processor
+        queue_task = asyncio.create_task(process_message_queue())
         
-        await client.run_until_disconnected()
+        # Run until shutdown signal is received
+        while is_running:
+            try:
+                await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                break
+        
+        # Cleanup
+        logger.info("Shutting down...")
+        queue_task.cancel()
+        await client.disconnect()
         
     except Exception as e:
         logger.error(f"Error in main function: {str(e)}")
         raise
     finally:
         try:
-            import shutil
-            if os.path.exists('temp'):
-                shutil.rmtree('temp')
+            # Cleanup temp directory
+            temp_dir = get_temp_dir()
+            if os.path.exists(temp_dir):
+                import shutil
+                shutil.rmtree(temp_dir)
                 logger.info("Cleaned up temp directory")
         except Exception as e:
             logger.error(f"Error cleaning up temp directory: {str(e)}")
