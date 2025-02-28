@@ -1,0 +1,28 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+
+# Database files
+*.db
+*.db-journal
+
+# Local development
+.env
+.env.local
+
+# Media files
+/temp/
+/tmp/
+
+# Logs
+*.log

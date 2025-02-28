@@ -1,9 +1,8 @@
 services:
     - type: web
       name: telegram-forwarder
-      env: python
-      buildCommand: pip install -r requirements.txt
-      startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --log-file -
+      env: docker
+      dockerfilePath: ./Dockerfile
       autoDeploy: false
       disk:
           name: temp
