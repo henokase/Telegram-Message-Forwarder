@@ -27,5 +27,11 @@ ENV RENDER=true
 # Expose port for the web service
 EXPOSE 8080
 
+# Make the entrypoint script executable
+RUN chmod +x /app/entrypoint.sh
+
 # Command to run the application
-CMD gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --log-file -
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# Command to run the application with increased log level
+CMD gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --log-file - --log-level debug

@@ -7,15 +7,19 @@ import sys
 import asyncio
 from datetime import datetime
 
-app = Flask(__name__)
-
-# Configure logging
+# Configure logging first
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     stream=sys.stdout  # Log to stdout for Render
 )
 logger = logging.getLogger(__name__)
+
+# Log the starting of the application
+logger.info("Initializing Telegram Forwarder Web Application")
+logger.info(f"Environment variables: PORT={os.environ.get('PORT')}, RENDER={os.environ.get('RENDER')}")
+
+app = Flask(__name__)
 
 # Global variable to store bot status
 bot_status = {
@@ -32,6 +36,7 @@ asyncio.set_event_loop(loop)
 def run_bot():
     """Run the Telegram forwarder bot in a separate thread"""
     try:
+        logger.info("Bot thread starting")
         bot_status["running"] = True
         bot_status["error"] = None
         bot_status["start_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -41,6 +46,7 @@ def run_bot():
         asyncio.set_event_loop(loop)
         
         # Run the bot
+        logger.info("Starting telegram_forwarder.main()")
         loop.run_until_complete(telegram_forwarder.main())
     except Exception as e:
         bot_status["error"] = str(e)
@@ -48,6 +54,14 @@ def run_bot():
     finally:
         bot_status["running"] = False
         loop.close()
+        logger.info("Bot thread ended")
+
+# Start the bot in a separate thread during app initialization
+logger.info("Starting bot thread during app initialization")
+bot_thread = threading.Thread(target=run_bot)
+bot_thread.daemon = True
+bot_thread.start()
+logger.info("Bot thread started with daemon=True")
 
 @app.route('/')
 def home():
